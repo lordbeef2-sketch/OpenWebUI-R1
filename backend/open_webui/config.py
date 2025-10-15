@@ -1092,6 +1092,38 @@ TOOL_SERVER_CONNECTIONS = PersistentConfig(
 
 WEBUI_URL = PersistentConfig("WEBUI_URL", "webui.url", os.environ.get("WEBUI_URL", ""))
 
+# -----------------------------------
+# HTTPS (PKCS#12) Support
+# -----------------------------------
+# These settings allow enabling HTTPS by uploading a PKCS#12 (.p12/.pfx) bundle
+# through the admin UI. On upload, the bundle is converted to cert.pem/key.pem
+# stored under data/ssl/. Only the extracted PEM files are persisted; the
+# original password is NOT stored.
+
+ENABLE_HTTPS = PersistentConfig(
+    "ENABLE_HTTPS",
+    "webui.https.enable",
+    os.environ.get("ENABLE_HTTPS", "False").lower() == "true",
+)
+
+HTTPS_PORT = PersistentConfig(
+    "HTTPS_PORT",
+    "webui.https.port",
+    int(os.environ.get("HTTPS_PORT", os.environ.get("PORT", "8080"))),
+)
+
+HTTPS_CERT_PATH = PersistentConfig(
+    "HTTPS_CERT_PATH", "webui.https.cert_path", os.environ.get("HTTPS_CERT_PATH", "")
+)
+HTTPS_KEY_PATH = PersistentConfig(
+    "HTTPS_KEY_PATH", "webui.https.key_path", os.environ.get("HTTPS_KEY_PATH", "")
+)
+HTTPS_P12_FILENAME = PersistentConfig(
+    "HTTPS_P12_FILENAME",
+    "webui.https.p12_filename",
+    os.environ.get("HTTPS_P12_FILENAME", ""),
+)
+
 
 ENABLE_SIGNUP = PersistentConfig(
     "ENABLE_SIGNUP",

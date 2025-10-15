@@ -1,13 +1,25 @@
 import logging
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel, ConfigDict
 import aiohttp
 
 from typing import Optional
+import os, tempfile, subprocess
+from pathlib import Path
+from urllib.parse import urlparse
+from fastapi.middleware.cors import CORSMiddleware
 
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.config import get_config, save_config
 from open_webui.config import BannerModel
+from open_webui.config import (
+    ENABLE_HTTPS,
+    HTTPS_PORT,
+    HTTPS_CERT_PATH,
+    HTTPS_KEY_PATH,
+    HTTPS_P12_FILENAME,
+)
+from open_webui.utils.cors import update_cors_from_webui_url
 
 from open_webui.utils.tools import (
     get_tool_server_data,
@@ -429,6 +441,141 @@ async def get_models_config(request: Request, user=Depends(get_admin_user)):
     return {
         "DEFAULT_MODELS": request.app.state.config.DEFAULT_MODELS,
         "MODEL_ORDER_LIST": request.app.state.config.MODEL_ORDER_LIST,
+    }
+
+############################
+# HTTPS Config (added)
+############################
+
+
+class HTTPSConfigForm(BaseModel):
+    ENABLE_HTTPS: bool
+    HTTPS_PORT: int
+    HTTPS_CERT_PATH: Optional[str]
+    HTTPS_KEY_PATH: Optional[str]
+    HTTPS_P12_FILENAME: Optional[str]
+    WEBUI_HOSTNAME: Optional[str] = None
+    WEBUI_URL: Optional[str] = None
+
+
+@router.get("/https", response_model=HTTPSConfigForm)
+async def get_https_config(request: Request, user=Depends(get_admin_user)):
+    current_url = str(request.app.state.config.WEBUI_URL or "")
+    parsed = urlparse(current_url) if current_url else None
+    hostname = parsed.hostname if parsed else None
+
+    return {
+        "ENABLE_HTTPS": request.app.state.config.ENABLE_HTTPS,
+        "HTTPS_PORT": request.app.state.config.HTTPS_PORT,
+        "HTTPS_CERT_PATH": request.app.state.config.HTTPS_CERT_PATH,
+        "HTTPS_KEY_PATH": request.app.state.config.HTTPS_KEY_PATH,
+        "HTTPS_P12_FILENAME": request.app.state.config.HTTPS_P12_FILENAME,
+        "WEBUI_HOSTNAME": hostname,
+        "WEBUI_URL": current_url,
+    }
+
+
+@router.post("/https", response_model=HTTPSConfigForm)
+async def set_https_config(
+    request: Request,
+    form_data: HTTPSConfigForm,
+    user=Depends(get_admin_user),
+):
+    request.app.state.config.ENABLE_HTTPS = form_data.ENABLE_HTTPS
+    request.app.state.config.HTTPS_PORT = form_data.HTTPS_PORT
+    if form_data.HTTPS_CERT_PATH:
+        request.app.state.config.HTTPS_CERT_PATH = form_data.HTTPS_CERT_PATH
+    if form_data.HTTPS_KEY_PATH:
+        request.app.state.config.HTTPS_KEY_PATH = form_data.HTTPS_KEY_PATH
+    if form_data.HTTPS_P12_FILENAME is not None:
+        request.app.state.config.HTTPS_P12_FILENAME = form_data.HTTPS_P12_FILENAME
+    # Optionally update global WEBUI_URL here for a single source of truth
+    try:
+        if form_data.WEBUI_HOSTNAME:
+            host = form_data.WEBUI_HOSTNAME.strip()
+            port = int(form_data.HTTPS_PORT)
+            port_part = "" if port == 443 else f":{port}"
+            request.app.state.config.WEBUI_URL = f"https://{host}{port_part}"
+        elif form_data.WEBUI_URL:
+            request.app.state.config.WEBUI_URL = form_data.WEBUI_URL
+    except Exception as e:
+        log.debug(f"Failed to update WEBUI_URL from HTTPS settings: {e}")
+    update_cors_from_webui_url(request.app, request.app.state.config.WEBUI_URL)
+    current_url = str(request.app.state.config.WEBUI_URL or "")
+    parsed = urlparse(current_url) if current_url else None
+    hostname = parsed.hostname if parsed else None
+
+    return {
+        "ENABLE_HTTPS": request.app.state.config.ENABLE_HTTPS,
+        "HTTPS_PORT": request.app.state.config.HTTPS_PORT,
+        "HTTPS_CERT_PATH": request.app.state.config.HTTPS_CERT_PATH,
+        "HTTPS_KEY_PATH": request.app.state.config.HTTPS_KEY_PATH,
+        "HTTPS_P12_FILENAME": request.app.state.config.HTTPS_P12_FILENAME,
+        "WEBUI_HOSTNAME": hostname,
+        "WEBUI_URL": current_url,
+    }
+
+
+@router.post("/https/upload_p12", response_model=HTTPSConfigForm)
+async def upload_https_p12(
+    request: Request,
+    file: UploadFile = File(...),
+    password: Optional[str] = Form(None),
+    user=Depends(get_admin_user),
+):
+    filename = file.filename
+    if not filename.lower().endswith((".p12", ".pfx")):
+        raise HTTPException(status_code=400, detail="Only .p12/.pfx files are supported")
+
+    ssl_dir = Path(os.environ.get("DATA_DIR", "data")) / "ssl"
+    ssl_dir.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".p12") as tmp:
+        contents = await file.read()
+        tmp.write(contents)
+        tmp_path = Path(tmp.name)
+
+    cert_path = ssl_dir / "cert.pem"
+    key_path = ssl_dir / "key.pem"
+
+    try:
+        cmd_cert = ["openssl", "pkcs12", "-in", str(tmp_path), "-clcerts", "-nokeys", "-out", str(cert_path)]
+        if password:
+            cmd_cert.extend(["-passin", f"pass:{password}"])
+        subprocess.run(cmd_cert, check=True, capture_output=True)
+
+        cmd_key = ["openssl", "pkcs12", "-in", str(tmp_path), "-nocerts", "-nodes", "-out", str(key_path)]
+        if password:
+            cmd_key.extend(["-passin", f"pass:{password}"])
+        subprocess.run(cmd_key, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        if cert_path.exists():
+            cert_path.unlink()
+        if key_path.exists():
+            key_path.unlink()
+        raise HTTPException(status_code=400, detail="Failed to extract certificate/key (openssl error)") from e
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+
+    request.app.state.config.HTTPS_CERT_PATH = str(cert_path)
+    request.app.state.config.HTTPS_KEY_PATH = str(key_path)
+    request.app.state.config.HTTPS_P12_FILENAME = filename
+
+    current_url = str(request.app.state.config.WEBUI_URL or "")
+    parsed = urlparse(current_url) if current_url else None
+    hostname = parsed.hostname if parsed else None
+
+    return {
+        "ENABLE_HTTPS": request.app.state.config.ENABLE_HTTPS,
+        "HTTPS_PORT": request.app.state.config.HTTPS_PORT,
+        "HTTPS_CERT_PATH": request.app.state.config.HTTPS_CERT_PATH,
+        "HTTPS_KEY_PATH": request.app.state.config.HTTPS_KEY_PATH,
+        "HTTPS_P12_FILENAME": request.app.state.config.HTTPS_P12_FILENAME,
+        "WEBUI_HOSTNAME": hostname,
+        "WEBUI_URL": current_url,
     }
 
 

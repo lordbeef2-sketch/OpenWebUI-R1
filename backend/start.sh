@@ -79,9 +79,27 @@ else
     ARGS=(--workers "$UVICORN_WORKERS")
 fi
 
-# Run uvicorn
+# Run uvicorn (optionally with HTTPS)
+
+SSL_ARGS=()
+if [[ "${ENABLE_HTTPS,,}" == "true" ]]; then
+  # Allow override via HTTPS_PORT
+  if [[ -n "$HTTPS_PORT" ]]; then
+    PORT="$HTTPS_PORT"
+  fi
+  CERT_PATH="${HTTPS_CERT_PATH:-}" 
+  KEY_PATH="${HTTPS_KEY_PATH:-}" 
+  if [[ -f "$CERT_PATH" && -f "$KEY_PATH" ]]; then
+    echo "Starting with HTTPS on port $PORT"
+    SSL_ARGS=(--ssl-certfile "$CERT_PATH" --ssl-keyfile "$KEY_PATH")
+  else
+    echo "ENABLE_HTTPS is true but cert/key not found (CERT_PATH=$CERT_PATH KEY_PATH=$KEY_PATH). Starting without SSL."
+  fi
+fi
+
 WEBUI_SECRET_KEY="$WEBUI_SECRET_KEY" exec "$PYTHON_CMD" -m uvicorn open_webui.main:app \
     --host "$HOST" \
     --port "$PORT" \
     --forwarded-allow-ips '*' \
+    "${SSL_ARGS[@]}" \
     "${ARGS[@]}"

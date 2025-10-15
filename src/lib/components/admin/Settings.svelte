@@ -1,8 +1,9 @@
-<script>
+<script lang="ts">
 	import { getContext, tick, onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
+    import type { Readable } from 'svelte/store';
 
 	import { config } from '$lib/stores';
 	import { getBackendConfig } from '$lib/apis';
@@ -17,6 +18,7 @@
 	import Connections from './Settings/Connections.svelte';
 	import Documents from './Settings/Documents.svelte';
 	import WebSearch from './Settings/WebSearch.svelte';
+	import Https from './Settings/Https.svelte';
 
 	import ChartBar from '../icons/ChartBar.svelte';
 	import DocumentChartBar from '../icons/DocumentChartBar.svelte';
@@ -24,7 +26,7 @@
 	import CodeExecution from './Settings/CodeExecution.svelte';
 	import Tools from './Settings/Tools.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n = getContext('i18n') as Readable<any>;
 
 	let selectedTab = 'general';
 
@@ -40,6 +42,7 @@
 			'tools',
 			'documents',
 			'web',
+			'https',
 			'code-execution',
 			'interface',
 			'audio',
@@ -56,7 +59,7 @@
 		scrollToTab(selectedTab);
 	}
 
-	const scrollToTab = (tabId) => {
+	const scrollToTab = (tabId: string) => {
 		const tabElement = document.getElementById(tabId);
 		if (tabElement) {
 			tabElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
@@ -85,6 +88,24 @@
 		id="admin-settings-tabs-container"
 		class="tabs mx-[16px] lg:mx-0 lg:px-[16px] flex flex-row overflow-x-auto gap-2.5 max-w-full lg:gap-1 lg:flex-col lg:flex-none lg:w-50 dark:text-gray-200 text-sm font-medium text-left scrollbar-none"
 	>
+		<button
+			id="https"
+			class="px-0.5 py-1 min-w-fit rounded-lg flex-1 lg:flex-none flex text-right transition {selectedTab ===
+			'https'
+				? ''
+				: ' text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'}"
+			on:click={() => {
+				goto('/admin/settings/https');
+			}}
+		>
+			<div class=" self-center mr-2">
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4">
+					<path fill-rule="evenodd" d="M4 6V5a4 4 0 1 1 8 0v1h.25A1.75 1.75 0 0 1 14 7.75v4.5A1.75 1.75 0 0 1 12.25 14H3.75A1.75 1.75 0 0 1 2 12.25v-4.5A1.75 1.75 0 0 1 3.75 6H4Zm1.5 0h5V5a2.5 2.5 0 0 0-5 0v1Z" clip-rule="evenodd" />
+				</svg>
+			</div>
+			<div class=" self-center">{$i18n.t('HTTPS')}</div>
+		</button>
+
 		<button
 			id="general"
 			class="px-0.5 py-1 min-w-fit rounded-lg flex-1 lg:flex-none flex text-right transition {selectedTab ===
@@ -456,7 +477,7 @@
 		{:else if selectedTab === 'evaluations'}
 			<Evaluations />
 		{:else if selectedTab === 'tools'}
-			<Tools />
+			<Tools saveSettings={() => {}} />
 		{:else if selectedTab === 'documents'}
 			<Documents
 				on:save={async () => {
@@ -469,6 +490,15 @@
 		{:else if selectedTab === 'web'}
 			<WebSearch
 				saveHandler={async () => {
+					toast.success($i18n.t('Settings saved successfully!'));
+
+					await tick();
+					await config.set(await getBackendConfig());
+				}}
+			/>
+		{:else if selectedTab === 'https'}
+			<Https
+				on:save={async () => {
 					toast.success($i18n.t('Settings saved successfully!'));
 
 					await tick();

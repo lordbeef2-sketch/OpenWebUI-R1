@@ -58,6 +58,7 @@ from ssl import CERT_NONE, CERT_REQUIRED, PROTOCOL_TLS
 
 from ldap3 import Server, Connection, NONE, Tls
 from ldap3.utils.conv import escape_filter_chars
+from open_webui.utils.cors import update_cors_from_webui_url
 
 router = APIRouter()
 
@@ -867,6 +868,7 @@ async def update_admin_config(
 ):
     request.app.state.config.SHOW_ADMIN_DETAILS = form_data.SHOW_ADMIN_DETAILS
     request.app.state.config.WEBUI_URL = form_data.WEBUI_URL
+    update_cors_from_webui_url(request.app, request.app.state.config.WEBUI_URL)
     request.app.state.config.ENABLE_SIGNUP = form_data.ENABLE_SIGNUP
 
     request.app.state.config.ENABLE_API_KEY = form_data.ENABLE_API_KEY

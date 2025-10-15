@@ -46,5 +46,18 @@ IF "%WEBUI_SECRET_KEY% %WEBUI_JWT_SECRET_KEY%" == " " (
 :: Execute uvicorn
 SET "WEBUI_SECRET_KEY=%WEBUI_SECRET_KEY%"
 IF "%UVICORN_WORKERS%"=="" SET UVICORN_WORKERS=1
-uvicorn open_webui.main:app --host "%HOST%" --port "%PORT%" --forwarded-allow-ips '*' --workers %UVICORN_WORKERS% --ws auto
-:: For ssl user uvicorn open_webui.main:app --host "%HOST%" --port "%PORT%" --forwarded-allow-ips '*' --ssl-keyfile "key.pem" --ssl-certfile "cert.pem" --ws auto
+IF "%CORS_ALLOW_ORIGIN%"=="" SET CORS_ALLOW_ORIGIN=http://localhost:5173;http://localhost:8080
+SET SSL_ARGS=
+IF /I "%ENABLE_HTTPS%"=="true" (
+    IF NOT "%HTTPS_PORT%"=="" SET PORT=%HTTPS_PORT%
+    IF NOT "%HTTPS_CERT_PATH%"=="" IF NOT "%HTTPS_KEY_PATH%"=="" (
+        IF EXIST "%HTTPS_CERT_PATH%" IF EXIST "%HTTPS_KEY_PATH%" (
+            ECHO Starting with HTTPS on port %PORT%
+            SET SSL_ARGS=--ssl-certfile "%HTTPS_CERT_PATH%" --ssl-keyfile "%HTTPS_KEY_PATH%"
+        ) ELSE (
+            ECHO ENABLE_HTTPS set but cert/key files not found, starting without SSL.
+        )
+    )
+)
+
+uvicorn open_webui.main:app --host "%HOST%" --port "%PORT%" --forwarded-allow-ips '*' --workers %UVICORN_WORKERS% %SSL_ARGS% --ws auto
