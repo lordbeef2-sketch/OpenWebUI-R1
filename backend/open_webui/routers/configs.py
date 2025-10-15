@@ -538,22 +538,72 @@ async def upload_https_p12(
     cert_path = ssl_dir / "cert.pem"
     key_path = ssl_dir / "key.pem"
 
-    try:
-        cmd_cert = ["openssl", "pkcs12", "-in", str(tmp_path), "-clcerts", "-nokeys", "-out", str(cert_path)]
+    def _run_extract(use_legacy: bool):
+        # Build commands for cert and key extraction
+        base_args = ["openssl", "pkcs12"]
+        if use_legacy:
+            # OpenSSL 3.x: needed for older PKCS#12 using legacy KDF/ciphers
+            base_args = base_args + ["-legacy"]
+
+        cmd_cert = base_args + [
+            "-in",
+            str(tmp_path),
+            "-clcerts",
+            "-nokeys",
+            "-out",
+            str(cert_path),
+        ]
         if password:
             cmd_cert.extend(["-passin", f"pass:{password}"])
-        subprocess.run(cmd_cert, check=True, capture_output=True)
 
-        cmd_key = ["openssl", "pkcs12", "-in", str(tmp_path), "-nocerts", "-nodes", "-out", str(key_path)]
+        cmd_key = base_args + [
+            "-in",
+            str(tmp_path),
+            "-nocerts",
+            "-nodes",
+            "-out",
+            str(key_path),
+        ]
         if password:
             cmd_key.extend(["-passin", f"pass:{password}"])
-        subprocess.run(cmd_key, check=True, capture_output=True)
-    except subprocess.CalledProcessError as e:
+
+        r1 = subprocess.run(cmd_cert, check=False, capture_output=True, text=True)
+        if r1.returncode != 0:
+            return False, r1.stderr or r1.stdout
+        r2 = subprocess.run(cmd_key, check=False, capture_output=True, text=True)
+        if r2.returncode != 0:
+            return False, r2.stderr or r2.stdout
+        return True, ""
+
+    try:
+        ok, err = _run_extract(use_legacy=False)
+        if not ok:
+            # Retry with -legacy for OpenSSL 3.x / old PKCS#12
+            ok2, err2 = _run_extract(use_legacy=True)
+            if not ok2:
+                # Cleanup partial files on failure
+                if cert_path.exists():
+                    cert_path.unlink()
+                if key_path.exists():
+                    key_path.unlink()
+                detail = (
+                    "Failed to extract certificate/key. "
+                    "Tried both standard and -legacy modes. "
+                    "OpenSSL output: " + (err2 or err)
+                )
+                raise HTTPException(status_code=400, detail=detail)
+    except FileNotFoundError as e:
+        # openssl not found on PATH
         if cert_path.exists():
             cert_path.unlink()
         if key_path.exists():
             key_path.unlink()
-        raise HTTPException(status_code=400, detail="Failed to extract certificate/key (openssl error)") from e
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "OpenSSL executable not found. Please install OpenSSL and ensure 'openssl' is in PATH."
+            ),
+        ) from e
     finally:
         try:
             tmp_path.unlink()
